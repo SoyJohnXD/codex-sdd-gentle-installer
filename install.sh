@@ -61,7 +61,7 @@ install_file() {
     say "installed $dst"
   fi
 }
-write_wrapper() {
+write_sync_wrapper() {
   local dst="$1"
   if [[ "$DRY_RUN" == "1" ]]; then
     say "would write $dst"
@@ -72,6 +72,22 @@ write_wrapper() {
 #!/usr/bin/env bash
 set -euo pipefail
 python3 "${HOME}/.codex/scripts/sync-opencode-sdd.py" "\$@"
+EOF
+  chmod +x "$dst"
+  say "installed $dst"
+}
+
+write_codex_sdd_wrapper() {
+  local dst="$1"
+  if [[ "$DRY_RUN" == "1" ]]; then
+    say "would write $dst"
+    return 0
+  fi
+  mkdir -p "$(dirname "$dst")"
+  cat > "$dst" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+exec codex -p sdd "$@"
 EOF
   chmod +x "$dst"
   say "installed $dst"
@@ -99,7 +115,8 @@ fi
 
 run mkdir -p "${HOME}/.codex/scripts" "${HOME}/.codex/agents" "${HOME}/.codex/prompts" "${HOME}/.agents/skills" "$PREFIX"
 install_file "${SCRIPT_DIR}/files/sync-opencode-sdd.py" "${HOME}/.codex/scripts/sync-opencode-sdd.py" 0755
-write_wrapper "${PREFIX}/codex-sdd-sync"
+write_sync_wrapper "${PREFIX}/codex-sdd-sync"
+write_codex_sdd_wrapper "${PREFIX}/codex-sdd"
 
 if [[ "$NO_SYNC" != "1" ]]; then
   say "running initial OpenCode -> Codex sync"

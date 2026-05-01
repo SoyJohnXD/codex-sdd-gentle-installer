@@ -18,6 +18,7 @@ Restart Codex after installation.
 
 - `~/.codex/scripts/sync-opencode-sdd.py`
 - `~/.local/bin/codex-sdd-sync`
+- `~/.local/bin/codex-sdd` — opens Codex with the dedicated SDD profile
 - generated Codex SDD agents under `~/.codex/agents/sdd-*.toml`
 - generated prompts under `~/.codex/prompts/sdd-*.md`
 - workflow/sync instructions in `~/.codex/engram-instructions.md` and `~/.codex/agents.md`
@@ -34,6 +35,22 @@ python3.11 ~/.codex/scripts/sync-opencode-sdd.py --test
 ```
 
 Or tell Codex: “actualicé OpenCode/gentle-ai, sincronízate”.
+
+## Open an SDD session
+
+From your project directory:
+
+```bash
+codex-sdd
+```
+
+This is equivalent to:
+
+```bash
+codex -p sdd
+```
+
+The Codex UI may still display the visible agent as `main`; that is expected. The `sdd` profile makes the main session behave as the SDD orchestrator and delegate phase work to subagents.
 
 ## SDD commands in Codex
 

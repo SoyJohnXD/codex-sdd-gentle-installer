@@ -25,6 +25,7 @@ PROMPTS_DIR = CODEX_DIR / "prompts"
 CODEX_SCRIPTS_DIR = CODEX_DIR / "scripts"
 USER_SKILLS_DIR = HOME / ".agents" / "skills"
 STATE_PATH = CODEX_DIR / "sdd-sync-state.json"
+SDD_PROFILE_PATH = CODEX_DIR / "sdd-profile-instructions.md"
 
 START = "<!-- gentle-ai:codex-sdd-workflow -->"
 END = "<!-- /gentle-ai:codex-sdd-workflow -->"
@@ -261,6 +262,53 @@ Command mapping:
 Auto mode is for Hermes/background ready-to-exec tasks: do not pause between phases unless blocked, verification fails after one fix loop, or approval is required for destructive side effects. It should complete missing planning, apply, verify, and archive when verification passes."""
 
 
+def sdd_profile_text() -> str:
+    return """# Codex SDD Orchestrator Profile
+
+You are running in the dedicated SDD profile. Behave as the `sdd-orchestrator` coordinator.
+
+## Primary role
+
+Coordinate Spec-Driven Development workflows. Keep the main context thin, delegate phase work to SDD subagents, synthesize results, and persist artifacts in Engram.
+
+## Required behavior
+
+- Treat `sdd init`, `sdd-new`, `sdd ff`, `sdd apply`, `sdd verify`, `sdd archive`, `sdd auto`, `sdd-exec`, and `ready to exec` as SDD workflow triggers.
+- Before any SDD command except init, ensure `sdd-init/{project}` exists in Engram; if missing, run SDD init first.
+- Use SDD phase subagents for real phase work: `sdd-init`, `sdd-explore`, `sdd-propose`, `sdd-spec`, `sdd-design`, `sdd-tasks`, `sdd-apply`, `sdd-verify`, `sdd-archive`.
+- In `sdd auto` / ready-to-exec mode, complete missing planning, apply, verify, and archive if verification passes. Do one fix loop after verification failure, then stop and report blockers.
+- Do not ask between phases in auto mode unless blocked, verification fails after one fix loop, or approval is required for destructive side effects.
+- Preserve the Engram memory protocol from the global instructions. Save significant decisions, discoveries, config changes, and bug fixes.
+
+## Artifact topic keys
+
+- Project context: `sdd-init/{project}`
+- Exploration: `sdd/{change-name}/explore`
+- Proposal: `sdd/{change-name}/proposal`
+- Spec: `sdd/{change-name}/spec`
+- Design: `sdd/{change-name}/design`
+- Tasks: `sdd/{change-name}/tasks`
+- Apply progress: `sdd/{change-name}/apply-progress`
+- Verify report: `sdd/{change-name}/verify-report`
+- Archive report: `sdd/{change-name}/archive-report`
+"""
+
+
+def ensure_sdd_profile(dry_run: bool, changed: list[str]) -> None:
+    write_text_if_changed(SDD_PROFILE_PATH, sdd_profile_text(), dry_run, changed)
+    path = CODEX_DIR / "config.toml"
+    content = read_text(path)
+    block = """
+[profiles.sdd]
+model = "gpt-5.5"
+model_reasoning_effort = "high"
+model_instructions_file = "{profile}"
+""".format(profile=str(SDD_PROFILE_PATH))
+    if "[profiles.sdd]" not in content:
+        content = content.rstrip() + "\n" + block + "\n"
+        write_text_if_changed(path, content, dry_run, changed)
+
+
 def sync_protocol_block() -> str:
     return """## OpenCode -> Codex Sync Protocol
 
@@ -376,6 +424,11 @@ def run_test() -> None:
     for p in sorted(AGENTS_DIR.glob("sdd*.toml")):
         tomllib.loads(p.read_text())
     tomllib.loads((CODEX_DIR / "config.toml").read_text())
+    if not SDD_PROFILE_PATH.exists():
+        raise SystemExit(f"Missing SDD profile instructions: {SDD_PROFILE_PATH}")
+    active_profile = read_text(SDD_PROFILE_PATH)
+    if "sdd-orchestrator" not in active_profile or "ready-to-exec" not in active_profile:
+        raise SystemExit("SDD profile instructions missing orchestrator/auto content")
     for name in ["sdd-auto.md", "sdd-exec.md", "sdd-sync.md"]:
         if not (PROMPTS_DIR / name).exists():
             raise SystemExit(f"Missing prompt: {PROMPTS_DIR / name}")
@@ -398,6 +451,7 @@ def run_sync(dry_run: bool = False) -> list[str]:
     sync_prompts(dry_run, changed)
     sync_skills(dry_run, changed)
     ensure_config_agents(dry_run, changed)
+    ensure_sdd_profile(dry_run, changed)
     update_instruction_files(dry_run, changed)
     write_state(dry_run, changed)
     return changed
