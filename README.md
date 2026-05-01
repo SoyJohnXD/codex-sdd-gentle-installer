@@ -2,6 +2,51 @@
 
 Installs the Codex compatibility layer for the gentle-ai/OpenCode SDD workflow.
 
+## Full bootstrap for a new machine
+
+Use this when a teammate starts with only Git and needs the complete local setup.
+
+```bash
+git clone https://github.com/nicolasvosoria/codex-sdd-gentle-installer.git
+cd codex-sdd-gentle-installer
+./install-full.sh
+```
+
+The full bootstrap installer:
+
+1. Detects macOS, Linux, or WSL2.
+2. Rejects native Windows shells with WSL2 guidance.
+3. Ensures `curl` and `python3` are available when possible.
+4. Installs OpenCode and Gentle AI if missing, with confirmation.
+5. Runs deterministic Gentle AI setup for the full OpenCode + Codex ecosystem:
+   `gentle-ai install --agents opencode,codex --preset full-gentleman --components context7,persona,engram,gga,permissions,sdd,skills`,
+   then `gentle-ai sync`.
+6. Verifies `~/.config/opencode/opencode.json`.
+7. Delegates to this repo's `./install.sh`.
+8. Runs Codex SDD sync/validation when possible.
+
+Supported full-bootstrap platforms:
+
+| Platform | Status | Notes |
+| --- | --- | --- |
+| macOS | Supported | Recommended for Codex Desktop users. Restart Codex Desktop after install. |
+| Linux | Supported | Works for CLI-oriented setup. |
+| WSL2 | Supported | Recommended Windows path. |
+| Native Windows | Not supported yet | Use WSL2; a future `install-full.ps1` can cover native Windows. |
+
+Useful options:
+
+```bash
+./install-full.sh --dry-run
+./install-full.sh --yes
+./install-full.sh --install-codex-cli
+./install-full.sh --prefix ~/.local/bin
+./install-full.sh --gentle-agents opencode,codex
+./install-full.sh --gentle-components context7,persona,engram,gga,permissions,sdd,skills
+```
+
+See the PRD: [`docs/full-bootstrap-installer-prd.md`](docs/full-bootstrap-installer-prd.md).
+
 ## Install order
 
 1. Install Codex CLI/Desktop.
