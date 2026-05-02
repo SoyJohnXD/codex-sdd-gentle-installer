@@ -115,6 +115,12 @@ ready to exec my-change
 
 `auto` / `ready to exec` completes the full flow: init, missing planning, apply, verify, archive if verification passes, with one fix loop on verification failure.
 
+## Engram artifact namespace guard
+
+Codex SDD phase agents must not rely on the implicit project selected by the Engram MCP server. The SDD profile now instructs the orchestrator to resolve `PROJECT_ROOT` and `PROJECT_NAME`, pass them to every phase, and require explicit `project: PROJECT_NAME` on Engram artifact reads/writes.
+
+This prevents false verification failures where `sdd-verify` cannot find artifacts because an earlier phase saved `sdd/<change>/tasks` under a different Engram project namespace. If drift is detected, the workflow should classify it as `artifact_namespace_drift`, backfill/retry the artifact under the canonical project, and avoid misclassifying the issue as an implementation failure when tests and specs pass.
+
 ## Dry run
 
 ```bash
