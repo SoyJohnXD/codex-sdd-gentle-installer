@@ -126,7 +126,9 @@ Before doing phase work:
 1. Read `{skill_path}` when available and follow it as the source of truth.
 2. Use Engram as the default artifact store.
 3. If mem_search returns a preview, call mem_get_observation before relying on artifact content.
-4. If you make important discoveries, decisions, configuration changes, or bug fixes, save them to Engram with mem_save.
+4. Resolve the canonical project from the orchestrator prompt (`Project:` / `PROJECT_NAME:`) or from the git repo you are working in. Always pass that exact value as `project` in every Engram `mem_search`, `mem_save`, and related artifact call. Do not rely on the implicit project selected by the Engram MCP server.
+5. If an Engram response says it auto-promoted or saved under a different project, report `artifact_namespace_drift` and retry/backfill with the canonical `project` before declaring the phase complete.
+6. If you make important discoveries, decisions, configuration changes, or bug fixes, save them to Engram with mem_save using the canonical `project`.
 
 Artifact topic keys:
 - Project context: `sdd-init/{{project}}`
@@ -138,6 +140,10 @@ Artifact topic keys:
 - Apply progress: `sdd/{{change-name}}/apply-progress`
 - Verify report: `sdd/{{change-name}}/verify-report`
 - Archive report: `sdd/{{change-name}}/archive-report`
+
+Artifact namespace rule:
+- A phase is not complete until its artifact is recoverable with `mem_search(query: "sdd/{{change-name}}/{{artifact-type}}", project: "{{canonical-project}}")`.
+- If the artifact only exists under another project, treat that as Engram namespace drift, not as successful persistence.
 
 Return: status, executive_summary, artifacts, risks, next_recommended, files_changed, key_learnings.
 
@@ -192,6 +198,18 @@ Before any SDD phase except sdd-init itself, search Engram for topic `sdd-init/{
 ## Artifact store
 Default to Engram. mem_search returns previews only; call mem_get_observation when content matters.
 
+## Canonical project and artifact namespace guard
+Before launching any phase, resolve and pin:
+- `PROJECT_ROOT`: the git repository root for the user's requested work.
+- `PROJECT_NAME`: the canonical Engram project name for that repo, normally the normalized repo name unless `sdd-init/{{project}}` already establishes another canonical name.
+
+Include both values in every phase-agent launch prompt. Require the phase agent to use `project: PROJECT_NAME` explicitly on all Engram artifact reads/writes. Never rely on the Engram MCP server's implicit project, because MCP startup cwd can differ from the repository being worked on.
+
+After each phase returns, verify the produced artifact with:
+`mem_search(query: "sdd/<change>/<artifact>", project: PROJECT_NAME)`.
+If missing, search all projects for the exact topic key. If found elsewhere, classify it as `artifact_namespace_drift`, backfill or ask the phase to re-save under `PROJECT_NAME`, and do not proceed to the next phase until canonical recovery works.
+If `sdd-verify` finds namespace drift but tests/spec compliance pass, report it as an artifact-store warning/blocker, not as an implementation failure.
+
 ## Delegation policy
 Use subagents for phase work. Keep local work to orchestration, artifact lookup, and synthesis. Parallelize only safe independent phases; do not run apply and verify in parallel for the same change.
 
@@ -245,6 +263,13 @@ Configured files:
 
 Default artifact store is Engram. Before every SDD command, ensure `sdd-init/{project}` exists in Engram; if missing, run SDD init first.
 
+Canonical project guard:
+- Resolve `PROJECT_ROOT` and `PROJECT_NAME` before launching SDD phase agents.
+- Pass both values in every phase prompt.
+- Require explicit `project: PROJECT_NAME` in Engram artifact calls.
+- After each phase, confirm the expected artifact is recoverable under `PROJECT_NAME`.
+- If an artifact appears under another Engram project, treat it as `artifact_namespace_drift` and backfill/retry before continuing.
+
 Command mapping:
 - `sdd init` / `sdd-init` -> `sdd-init`
 - `sdd explore <topic>` / `sdd-explore <topic>` -> `sdd-explore`
@@ -279,6 +304,8 @@ Coordinate Spec-Driven Development workflows. Keep the main context thin, delega
 - In `sdd auto` / ready-to-exec mode, complete missing planning, apply, verify, and archive if verification passes. Do one fix loop after verification failure, then stop and report blockers.
 - Do not ask between phases in auto mode unless blocked, verification fails after one fix loop, or approval is required for destructive side effects.
 - Preserve the Engram memory protocol from the global instructions. Save significant decisions, discoveries, config changes, and bug fixes.
+- Resolve and pin `PROJECT_ROOT` and `PROJECT_NAME` before every SDD workflow. Pass them to all SDD phase subagents and require explicit `project: PROJECT_NAME` for Engram reads/writes. Do not rely on the Engram MCP server's implicit project.
+- Verify each phase artifact is recoverable under `PROJECT_NAME` before starting dependent phases. If an artifact exists only under a different project, classify `artifact_namespace_drift`, backfill/retry, and do not let `sdd-verify` misclassify that namespace issue as an implementation failure.
 
 ## Artifact topic keys
 
@@ -429,11 +456,28 @@ def run_test() -> None:
     active_profile = read_text(SDD_PROFILE_PATH)
     if "sdd-orchestrator" not in active_profile or "ready-to-exec" not in active_profile:
         raise SystemExit("SDD profile instructions missing orchestrator/auto content")
+    namespace_needles = [
+        "PROJECT_NAME",
+        "artifact_namespace_drift",
+        "explicit `project: PROJECT_NAME`",
+    ]
+    for needle in namespace_needles:
+        if needle not in active_profile:
+            raise SystemExit(f"SDD profile instructions missing namespace guard: {needle}")
+    verify_agent = read_text(AGENTS_DIR / "sdd-verify.toml")
+    if "artifact_namespace_drift" not in verify_agent or "Do not rely on the implicit project" not in verify_agent:
+        raise SystemExit("sdd-verify agent missing Engram namespace drift guard")
     for name in ["sdd-auto.md", "sdd-exec.md", "sdd-sync.md"]:
         if not (PROMPTS_DIR / name).exists():
             raise SystemExit(f"Missing prompt: {PROMPTS_DIR / name}")
     active = read_text(CODEX_DIR / "engram-instructions.md")
-    required = ["AUTO / READY-TO-EXEC", "OpenCode -> Codex Sync Protocol", "sdd auto <change>"]
+    required = [
+        "AUTO / READY-TO-EXEC",
+        "OpenCode -> Codex Sync Protocol",
+        "sdd auto <change>",
+        "Canonical project guard",
+        "artifact_namespace_drift",
+    ]
     for needle in required:
         if needle not in active:
             raise SystemExit(f"Active instructions missing: {needle}")
