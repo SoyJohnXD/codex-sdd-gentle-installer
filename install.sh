@@ -3,6 +3,8 @@ set -euo pipefail
 
 DRY_RUN=0
 NO_SYNC=0
+SKIP_MCP=0
+UPDATE_GENTLE=0
 PREFIX="${HOME}/.local/bin"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -13,16 +15,23 @@ Usage: ./install.sh [options]
 Installs the Codex compatibility layer for gentle-ai/OpenCode SDD workflows.
 
 Options:
-  --dry-run        Show actions without writing files
-  --no-sync        Install scripts only; do not run initial sync
-  --prefix DIR     Install wrapper command into DIR (default: ~/.local/bin)
-  -h, --help       Show help
+  --dry-run          Show actions without writing files
+  --no-sync          Install scripts only; do not run initial sync
+  --skip-mcp         Do not ensure Codex MCP config
+  --update-gentle    Run gentle-ai upgrade + sync before Codex SDD sync
+  --prefix DIR       Install wrapper command into DIR (default: ~/.local/bin)
+  -h, --help         Show help
 
 Requirements:
   - Codex installed/configured at ~/.codex
   - gentle-ai/OpenCode installed/configured at ~/.config/opencode/opencode.json
   - python3 for sync
   - python3.11 recommended for TOML validation tests
+
+Updater:
+  ./install.sh --update-gentle
+    Runs gentle-ai upgrade, gentle-ai sync, ensures Engram/Context7 MCPs,
+    regenerates Codex SDD assets, and validates the result.
 EOF
 }
 
@@ -30,6 +39,8 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
     --no-sync) NO_SYNC=1 ;;
+    --skip-mcp) SKIP_MCP=1 ;;
+    --update-gentle) UPDATE_GENTLE=1 ;;
     --prefix) PREFIX="${2:?--prefix requires a directory}"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 2 ;;
@@ -113,12 +124,27 @@ if [[ ! -f "${SCRIPT_DIR}/files/sync-opencode-sdd.py" ]]; then
   exit 1
 fi
 
+if [[ "$UPDATE_GENTLE" == "1" ]]; then
+  if ! command -v gentle-ai >/dev/null 2>&1; then
+    echo "Missing required command for --update-gentle: gentle-ai" >&2
+    exit 1
+  fi
+  say "updating Gentle AI managed tools"
+  run gentle-ai upgrade
+  say "syncing Gentle AI managed agent assets"
+  run gentle-ai sync
+fi
+
 run mkdir -p "${HOME}/.codex/scripts" "${HOME}/.codex/agents" "${HOME}/.codex/prompts" "${HOME}/.agents/skills" "$PREFIX"
 install_file "${SCRIPT_DIR}/files/sync-opencode-sdd.py" "${HOME}/.codex/scripts/sync-opencode-sdd.py" 0755
 write_sync_wrapper "${PREFIX}/codex-sdd-sync"
 write_codex_sdd_wrapper "${PREFIX}/codex-sdd"
 
 if [[ "$NO_SYNC" != "1" ]]; then
+  if [[ "$SKIP_MCP" != "1" ]]; then
+    say "ensuring Codex MCP config for Engram and Context7"
+    run python3 "${HOME}/.codex/scripts/sync-opencode-sdd.py" --ensure-mcps
+  fi
   say "running initial OpenCode -> Codex sync"
   run python3 "${HOME}/.codex/scripts/sync-opencode-sdd.py"
   if command -v python3.11 >/dev/null 2>&1; then

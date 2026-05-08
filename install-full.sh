@@ -46,9 +46,9 @@ What this does:
   1. Detects macOS/Linux/WSL2 and rejects native Windows.
   2. Ensures bootstrap prerequisites such as curl and python3 when possible.
   3. Installs OpenCode and gentle-ai when missing, with confirmation unless --yes.
-  4. Runs gentle-ai install/sync for the full opencode+codex ecosystem.
+  4. Runs gentle-ai upgrade/install/sync for the full opencode+codex ecosystem.
   5. Ensures ~/.config/opencode/opencode.json exists.
-  6. Delegates Codex SDD compatibility installation to ./install.sh.
+  6. Delegates Codex SDD compatibility installation and MCP assurance to ./install.sh.
   7. Runs sync/validation and prints Codex Desktop/CLI next steps.
 EOF
 }
@@ -230,6 +230,8 @@ run_gentle_setup() {
     return 0
   fi
   command -v gentle-ai >/dev/null 2>&1 || die "gentle-ai is not available"
+  say "updating Gentle AI managed tools"
+  run gentle-ai upgrade
   say "running gentle-ai install for agents=${GENTLE_AGENTS}, preset=${GENTLE_PRESET}, components=${GENTLE_COMPONENTS}"
   say "this may be interactive if gentle-ai needs confirmation or provider setup"
   local args=(install --agents "$GENTLE_AGENTS" --preset "$GENTLE_PRESET")
@@ -319,9 +321,7 @@ CLI users can also run:
   codex-sdd
 
 If you update Gentle AI/OpenCode later:
-  gentle-ai sync
-  codex-sdd-sync
-  python3.11 ~/.codex/scripts/sync-opencode-sdd.py --test
+  ./install.sh --update-gentle
 EOF
 }
 
