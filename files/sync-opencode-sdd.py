@@ -15,7 +15,7 @@ import re
 import shutil
 import sys
 from pathlib import Path
-from typing import Dict, Any, Iterable
+from typing import Dict, Any
 
 HOME = Path.home()
 OPENCODE_DIR = HOME / ".config" / "opencode"
@@ -26,6 +26,7 @@ CODEX_SCRIPTS_DIR = CODEX_DIR / "scripts"
 USER_SKILLS_DIR = HOME / ".agents" / "skills"
 STATE_PATH = CODEX_DIR / "sdd-sync-state.json"
 SDD_PROFILE_PATH = CODEX_DIR / "sdd-profile-instructions.md"
+CODEX_CONFIG_PATH = CODEX_DIR / "config.toml"
 
 START = "<!-- gentle-ai:codex-sdd-workflow -->"
 END = "<!-- /gentle-ai:codex-sdd-workflow -->"
@@ -45,6 +46,20 @@ PHASES = [
     "sdd-onboard",
 ]
 ALL_AGENTS = ["sdd-orchestrator"] + PHASES
+UPSTREAM_ORCHESTRATOR_NAMES = ["gentle-orchestrator", "sdd-orchestrator"]
+
+REQUIRED_MCPS = {
+    "engram": {
+        "description": "Engram persistent memory and SDD artifact store",
+        "command": "engram",
+        "args": ["mcp", "--tools=agent"],
+    },
+    "context7": {
+        "description": "Context7 current developer documentation lookup",
+        "command": "npx",
+        "args": ["-y", "@upstash/context7-mcp"],
+    },
+}
 
 SANDBOX_BY_AGENT = {
     "sdd-explore": "read-only",
@@ -94,6 +109,56 @@ def json_string(value: str) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
+def toml_array(values: list[str]) -> str:
+    return "[" + ", ".join(json_string(value) for value in values) + "]"
+
+
+def mcp_block(name: str, cfg: Dict[str, Any]) -> str:
+    return (
+        f"[mcp_servers.{name}]\n"
+        f"command = {json_string(cfg['command'])}\n"
+        f"args = {toml_array(cfg.get('args', []))}\n"
+    )
+
+
+def has_mcp_block(content: str, name: str) -> bool:
+    pattern = rf"(?m)^\[mcp_servers\.{re.escape(name)}\]\s*$"
+    return re.search(pattern, content) is not None
+
+
+def mcp_audit_lines(config_content: str) -> list[str]:
+    lines = ["Codex MCP audit:"]
+    for name, cfg in REQUIRED_MCPS.items():
+        present = has_mcp_block(config_content, name)
+        command = str(cfg["command"])
+        command_path = shutil.which(command)
+        status = "configured" if present else "missing"
+        command_status = command_path or "command not found in PATH"
+        lines.append(f"- {name}: {status}; command `{command}` -> {command_status}; {cfg['description']}")
+    return lines
+
+
+def ensure_required_mcps(dry_run: bool, changed: list[str]) -> list[str]:
+    """Append missing required MCP blocks without rewriting user-managed ones."""
+    content = read_text(CODEX_CONFIG_PATH)
+    new_content = content.rstrip()
+    appended: list[str] = []
+    for name, cfg in REQUIRED_MCPS.items():
+        if has_mcp_block(content, name):
+            continue
+        if new_content:
+            new_content += "\n\n"
+        new_content += mcp_block(name, cfg).rstrip()
+        appended.append(name)
+    if appended:
+        write_text_if_changed(CODEX_CONFIG_PATH, new_content.rstrip() + "\n", dry_run, changed)
+    return appended
+
+
+def run_mcp_audit() -> None:
+    print("\n".join(mcp_audit_lines(read_text(CODEX_CONFIG_PATH))))
+
+
 def normalize_model(model: str | None) -> str:
     if not model:
         return "gpt-5.4"
@@ -107,6 +172,33 @@ def extract_file_prompt(prompt_ref: str | None) -> str:
     if m:
         return read_text(Path(m.group(1)))
     return prompt_ref
+
+
+def upstream_cfg_for(local_name: str, agents: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the OpenCode agent config that backs a Codex-local agent name.
+
+    Gentle AI renamed the OpenCode SDD coordinator from `sdd-orchestrator` to
+    `gentle-orchestrator`, while this Codex compatibility layer keeps the local
+    agent name `sdd-orchestrator` for stable Codex prompts/profile docs.
+    """
+    if local_name == "sdd-orchestrator":
+        for upstream_name in UPSTREAM_ORCHESTRATOR_NAMES:
+            cfg = agents.get(upstream_name)
+            if cfg:
+                return cfg
+        return {}
+    return agents.get(local_name, {})
+
+
+def codex_prompt_content(content: str) -> str:
+    """Translate OpenCode command metadata to Codex-local compatibility names."""
+    # OpenCode's upstream command files route through gentle-orchestrator. Codex
+    # receives that coordinator as ~/.codex/agents/sdd-orchestrator.toml.
+    return re.sub(
+        r"(?m)^agent:\s+gentle-orchestrator\s*$",
+        "agent: sdd-orchestrator",
+        content,
+    )
 
 
 def load_opencode() -> Dict[str, Any]:
@@ -323,8 +415,7 @@ Coordinate Spec-Driven Development workflows. Keep the main context thin, delega
 
 def ensure_sdd_profile(dry_run: bool, changed: list[str]) -> None:
     write_text_if_changed(SDD_PROFILE_PATH, sdd_profile_text(), dry_run, changed)
-    path = CODEX_DIR / "config.toml"
-    content = read_text(path)
+    content = read_text(CODEX_CONFIG_PATH)
     block = """
 [profiles.sdd]
 model = "gpt-5.5"
@@ -333,17 +424,20 @@ model_instructions_file = "{profile}"
 """.format(profile=str(SDD_PROFILE_PATH))
     if "[profiles.sdd]" not in content:
         content = content.rstrip() + "\n" + block + "\n"
-        write_text_if_changed(path, content, dry_run, changed)
+        write_text_if_changed(CODEX_CONFIG_PATH, content, dry_run, changed)
 
 
 def sync_protocol_block() -> str:
     return """## OpenCode -> Codex Sync Protocol
 
 When the user says they updated OpenCode/gentle-ai and asks to "sincronízate", "sync Codex", "actualiza la configuración", or similar:
-1. Run `python3 ~/.codex/scripts/sync-opencode-sdd.py --check` to see drift.
-2. If drift exists or the user asked to update, run `python3 ~/.codex/scripts/sync-opencode-sdd.py`.
-3. Run `python3 ~/.codex/scripts/sync-opencode-sdd.py --test`.
-4. Summarize changed files and tell the user to restart Codex CLI/Desktop if needed.
+1. Prefer the one-command updater from the installer repo: `./install.sh --update-gentle`.
+2. If running manually, run `gentle-ai upgrade`, then `gentle-ai sync`.
+3. Run `python3 ~/.codex/scripts/sync-opencode-sdd.py --ensure-mcps`.
+4. Run `python3 ~/.codex/scripts/sync-opencode-sdd.py --check` to see drift.
+5. If drift exists or the user asked to update, run `python3 ~/.codex/scripts/sync-opencode-sdd.py`.
+6. Run `python3 ~/.codex/scripts/sync-opencode-sdd.py --test`.
+7. Summarize changed files and tell the user to restart Codex CLI/Desktop if needed.
 
 Do not hand-edit generated `~/.codex/agents/sdd-*.toml` unless the sync script is also updated. OpenCode remains the upstream source for SDD models/prompts; Codex receives a generated compatibility layer."""
 
@@ -357,8 +451,7 @@ def update_instruction_files(dry_run: bool, changed: list[str]) -> None:
 
 
 def ensure_config_agents(dry_run: bool, changed: list[str]) -> None:
-    path = CODEX_DIR / "config.toml"
-    content = read_text(path)
+    content = read_text(CODEX_CONFIG_PATH)
     if "[agents]" not in content:
         content = content.rstrip() + "\n\n[agents]\nmax_threads = 6\nmax_depth = 1\njob_max_runtime_seconds = 1800\n"
     else:
@@ -369,7 +462,7 @@ def ensure_config_agents(dry_run: bool, changed: list[str]) -> None:
             content = content.rstrip() + "\nmax_depth = 1\n"
         if "job_max_runtime_seconds" not in content:
             content = content.rstrip() + "\njob_max_runtime_seconds = 1800\n"
-    write_text_if_changed(path, content.rstrip() + "\n", dry_run, changed)
+    write_text_if_changed(CODEX_CONFIG_PATH, content.rstrip() + "\n", dry_run, changed)
 
 
 def sync_skills(dry_run: bool, changed: list[str]) -> None:
@@ -398,7 +491,7 @@ def sync_skills(dry_run: bool, changed: list[str]) -> None:
 def sync_prompts(dry_run: bool, changed: list[str]) -> None:
     commands_dir = OPENCODE_DIR / "commands"
     for src in sorted(commands_dir.glob("sdd-*.md")):
-        content = src.read_text()
+        content = codex_prompt_content(src.read_text())
         note = "\n\n---\nCodex compatibility: if this prompt is not surfaced as a slash command, type the same command textually (for example `sdd auto <change>`).\n"
         write_text_if_changed(PROMPTS_DIR / src.name, content.rstrip() + note, dry_run, changed)
     auto_prompts = {
@@ -414,7 +507,7 @@ def sync_prompts(dry_run: bool, changed: list[str]) -> None:
 def sync_agents(data: Dict[str, Any], dry_run: bool, changed: list[str]) -> None:
     agents = data.get("agent", {})
     for name in ALL_AGENTS:
-        cfg = agents.get(name, {})
+        cfg = upstream_cfg_for(name, agents)
         prompt_body = extract_file_prompt(cfg.get("prompt"))
         if not prompt_body and name != "sdd-orchestrator":
             prompt_body = read_text(OPENCODE_DIR / "prompts" / "sdd" / f"{name}.md")
@@ -436,6 +529,7 @@ def write_state(dry_run: bool, changed: list[str]) -> None:
         "target": str(CODEX_DIR),
         "files": files,
         "agents": ALL_AGENTS,
+        "required_mcp_servers": sorted(REQUIRED_MCPS),
     }
     write_text_if_changed(STATE_PATH, json.dumps(state, indent=2, sort_keys=True) + "\n", dry_run, changed)
 
@@ -450,7 +544,11 @@ def run_test() -> None:
         raise SystemExit(f"Python tomllib unavailable; use python3.11 for tests: {exc}")
     for p in sorted(AGENTS_DIR.glob("sdd*.toml")):
         tomllib.loads(p.read_text())
-    tomllib.loads((CODEX_DIR / "config.toml").read_text())
+    config_content = CODEX_CONFIG_PATH.read_text()
+    tomllib.loads(config_content)
+    for name in REQUIRED_MCPS:
+        if not has_mcp_block(config_content, name):
+            raise SystemExit(f"Codex config missing required MCP server block: {name}")
     if not SDD_PROFILE_PATH.exists():
         raise SystemExit(f"Missing SDD profile instructions: {SDD_PROFILE_PATH}")
     active_profile = read_text(SDD_PROFILE_PATH)
@@ -467,9 +565,22 @@ def run_test() -> None:
     verify_agent = read_text(AGENTS_DIR / "sdd-verify.toml")
     if "artifact_namespace_drift" not in verify_agent or "Do not rely on the implicit project" not in verify_agent:
         raise SystemExit("sdd-verify agent missing Engram namespace drift guard")
+    orchestrator_agent = read_text(AGENTS_DIR / "sdd-orchestrator.toml")
+    orchestrator_needles = [
+        "Gentle AI",
+        "SDD Orchestrator",
+        "## Synced OpenCode orchestrator prompt",
+    ]
+    for needle in orchestrator_needles:
+        if needle not in orchestrator_agent:
+            raise SystemExit(f"sdd-orchestrator agent missing upstream prompt content: {needle}")
     for name in ["sdd-auto.md", "sdd-exec.md", "sdd-sync.md"]:
         if not (PROMPTS_DIR / name).exists():
             raise SystemExit(f"Missing prompt: {PROMPTS_DIR / name}")
+    for p in sorted(PROMPTS_DIR.glob("sdd-*.md")):
+        text = p.read_text()
+        if "agent: gentle-orchestrator" in text:
+            raise SystemExit(f"Codex prompt still references upstream OpenCode agent name: {p}")
     active = read_text(CODEX_DIR / "engram-instructions.md")
     required = [
         "AUTO / READY-TO-EXEC",
@@ -496,6 +607,7 @@ def run_sync(dry_run: bool = False) -> list[str]:
     sync_skills(dry_run, changed)
     ensure_config_agents(dry_run, changed)
     ensure_sdd_profile(dry_run, changed)
+    ensure_required_mcps(dry_run, changed)
     update_instruction_files(dry_run, changed)
     write_state(dry_run, changed)
     return changed
@@ -505,8 +617,25 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="Show what would change and exit non-zero if drift exists")
     parser.add_argument("--dry-run", action="store_true", help="Show what would change without writing")
+    parser.add_argument("--ensure-mcps", action="store_true", help="Ensure required Codex MCP server config and exit")
+    parser.add_argument("--mcp-audit", action="store_true", help="Print Codex MCP config status and exit")
     parser.add_argument("--test", action="store_true", help="Validate generated Codex SDD configuration")
     args = parser.parse_args()
+
+    if args.mcp_audit:
+        run_mcp_audit()
+        return
+
+    if args.ensure_mcps:
+        changed: list[str] = []
+        appended = ensure_required_mcps(args.dry_run, changed)
+        if appended:
+            label = "Would configure" if args.dry_run else "Configured"
+            print(f"{label} Codex MCP server(s): {', '.join(appended)}")
+        else:
+            print("Codex MCP servers already configured")
+        run_mcp_audit()
+        return
 
     if args.test:
         run_test()

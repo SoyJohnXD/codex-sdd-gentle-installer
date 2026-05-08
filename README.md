@@ -18,11 +18,11 @@ The full bootstrap installer:
 2. Rejects native Windows shells with WSL2 guidance.
 3. Ensures `curl` and `python3` are available when possible.
 4. Installs OpenCode and Gentle AI if missing, with confirmation.
-5. Runs deterministic Gentle AI setup for the full OpenCode + Codex ecosystem:
+5. Updates Gentle AI managed tools and runs deterministic Gentle AI setup for the full OpenCode + Codex ecosystem:
    `gentle-ai install --agents opencode,codex --preset full-gentleman --components context7,persona,engram,gga,permissions,sdd,skills`,
    then `gentle-ai sync`.
 6. Verifies `~/.config/opencode/opencode.json`.
-7. Delegates to this repo's `./install.sh`.
+7. Delegates to this repo's `./install.sh`, which ensures Codex MCP config for Engram and Context7.
 8. Runs Codex SDD sync/validation when possible.
 
 Supported full-bootstrap platforms:
@@ -59,6 +59,22 @@ See the PRD: [`docs/full-bootstrap-installer-prd.md`](docs/full-bootstrap-instal
 
 Restart Codex after installation.
 
+## One-command updater
+
+Use this after updating Codex, OpenCode, Gentle AI, or this repository:
+
+```bash
+./install.sh --update-gentle
+```
+
+This runs the complete local update flow:
+
+1. `gentle-ai upgrade`
+2. `gentle-ai sync`
+3. Ensure Codex MCP config for Engram and Context7
+4. Regenerate Codex SDD agents/prompts/instructions
+5. Validate the generated Codex SDD configuration
+
 ## What it installs
 
 - `~/.codex/scripts/sync-opencode-sdd.py`
@@ -68,18 +84,42 @@ Restart Codex after installation.
 - generated prompts under `~/.codex/prompts/sdd-*.md`
 - workflow/sync instructions in `~/.codex/engram-instructions.md` and `~/.codex/agents.md`
 - skill discovery symlinks under `~/.agents/skills`
+- Codex MCP config entries in `~/.codex/config.toml` for:
+  - `engram` — persistent memory and SDD artifact storage
+  - `context7` — current developer documentation lookup
 
 ## After updating gentle-ai/OpenCode
 
 Run:
 
 ```bash
-codex-sdd-sync --check
-codex-sdd-sync
-python3.11 ~/.codex/scripts/sync-opencode-sdd.py --test
+./install.sh --update-gentle
 ```
 
 Or tell Codex: “actualicé OpenCode/gentle-ai, sincronízate”.
+
+Why the order matters: recent Gentle AI versions regenerate persona/skill blocks
+and may change OpenCode's internal SDD agent names during `gentle-ai sync`.
+`codex-sdd-sync` must run after that so Codex receives the refreshed prompts,
+skills, and the local `sdd-orchestrator` compatibility agent.
+
+## MCP audit and repair
+
+The updater preserves existing user-managed MCP blocks and only appends missing
+required blocks. To inspect or repair MCP config directly:
+
+```bash
+codex-sdd-sync --mcp-audit
+codex-sdd-sync --ensure-mcps
+codex mcp list
+```
+
+Expected core MCPs:
+
+| MCP | Purpose | Configured command |
+| --- | --- | --- |
+| `engram` | Memory and SDD artifacts | `engram mcp --tools=agent` |
+| `context7` | Current developer docs | `npx -y @upstash/context7-mcp` |
 
 ## Open an SDD session
 
