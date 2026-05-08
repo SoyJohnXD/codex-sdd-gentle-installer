@@ -81,6 +81,41 @@ DEFAULT_REASONING = {
 }
 
 
+def multiagent_policy_block() -> str:
+    return """## Multi-agent default policy
+
+Prefer a multi-agent SDD workflow for most non-trivial work. The orchestrator should keep its own context thin and route phase work to the generated SDD phase agents instead of doing planning, implementation, and verification inline.
+
+Default delegation shape:
+- planning phases: `sdd-explore`, `sdd-propose`, `sdd-spec`, `sdd-design`, and `sdd-tasks`
+- implementation: `sdd-apply`
+- verification: `sdd-verify`
+- archive: `sdd-archive`
+
+Safe parallelism:
+- parallelize independent exploration/review questions when write scopes do not overlap
+- never run apply and verify in parallel for the same change
+- never let two implementation agents own the same files
+
+Single-agent inline execution is an exception, not the default. It is acceptable only for docs-only changes, tiny config-only changes, urgent tightly-coupled hotfixes, or when the current Codex runtime explicitly blocks subagent spawning. When using the exception, say why.
+"""
+
+
+def strict_tdd_policy_block() -> str:
+    return """## Strict TDD default policy
+
+Strict TDD is the default for SDD implementation when a test runner is available and the change touches production code. Treat docs-only, prompt-only, generated config-only, and test-infrastructure-only changes as standard mode unless the user explicitly asks for strict TDD.
+
+When Strict TDD is active:
+- the apply phase must write or update failing behavioral tests before implementation
+- the apply phase must report TDD Cycle Evidence
+- the verify phase must check TDD evidence and changed-file coverage
+- missing TDD evidence is a verification blocker, not a silent warning
+
+When Strict TDD is inactive, still add or update tests when behavior changes, and explain why strict mode did not apply.
+"""
+
+
 def read_text(path: Path, default: str = "") -> str:
     try:
         return path.read_text()
@@ -239,6 +274,7 @@ Artifact namespace rule:
 
 Return: status, executive_summary, artifacts, risks, next_recommended, files_changed, key_learnings.
 
+{strict_tdd_policy_block() if name in {"sdd-apply", "sdd-verify"} else ""}
 ## Synced OpenCode prompt
 
 {prompt_body}
@@ -250,6 +286,8 @@ def orchestrator_instructions(opencode_prompt: str) -> str:
 
 You are not alone in the codebase. Other agents may be running in parallel. Do not revert their edits; integrate or route around them.
 
+{multiagent_policy_block()}
+{strict_tdd_policy_block()}
 ## Codex compatibility layer
 
 Treat these user intents as workflow triggers, even if custom slash prompts are not available in the current Codex surface:
@@ -273,7 +311,7 @@ When the user says any of these:
 - `ready to exec <change>`
 - Hermes launches a task that is already planned, ready, or asks to execute/complete an SDD change
 
-Run the workflow to completion unless blocked by missing information, failing verification, or required approval:
+Run the workflow to completion unless blocked by missing information, failing verification, or required approval. Use the generated SDD phase agents by default; do not perform all phases inline unless an explicit exception applies:
 1. Ensure `sdd-init/{{project}}` exists; if missing, run `sdd-init`.
 2. Inspect Engram artifacts for `sdd/<change>/...`.
 3. If proposal/spec/design/tasks are missing, create the missing planning artifacts in dependency order.
@@ -303,7 +341,7 @@ If missing, search all projects for the exact topic key. If found elsewhere, cla
 If `sdd-verify` finds namespace drift but tests/spec compliance pass, report it as an artifact-store warning/blocker, not as an implementation failure.
 
 ## Delegation policy
-Use subagents for phase work. Keep local work to orchestration, artifact lookup, and synthesis. Parallelize only safe independent phases; do not run apply and verify in parallel for the same change.
+Use SDD subagents for phase work by default. Keep local work to orchestration, artifact lookup, integration, and synthesis. Parallelize safe independent exploration/review questions when write scopes are disjoint; do not run apply and verify in parallel for the same change. If you choose a single-agent exception, state the reason explicitly.
 
 ## Synced OpenCode orchestrator prompt
 
@@ -355,6 +393,16 @@ Configured files:
 
 Default artifact store is Engram. Before every SDD command, ensure `sdd-init/{project}` exists in Engram; if missing, run SDD init first.
 
+Multi-agent default:
+- Prefer generated SDD phase agents for most non-trivial work.
+- Keep the orchestrator focused on coordination, artifact lookup, integration, and synthesis.
+- Use single-agent inline execution only for docs-only, tiny config-only, urgent tightly-coupled hotfixes, or when the runtime blocks subagent spawning; state the exception reason.
+
+Strict TDD default:
+- When a test runner exists and the change touches production code, treat Strict TDD as active for apply/verify.
+- Apply must produce TDD Cycle Evidence; verify must reject missing evidence when Strict TDD is active.
+- Docs-only/prompt-only/generated-config-only changes may use standard mode with a stated reason.
+
 Canonical project guard:
 - Resolve `PROJECT_ROOT` and `PROJECT_NAME` before launching SDD phase agents.
 - Pass both values in every phase prompt.
@@ -380,7 +428,7 @@ Auto mode is for Hermes/background ready-to-exec tasks: do not pause between pha
 
 
 def sdd_profile_text() -> str:
-    return """# Codex SDD Orchestrator Profile
+    return f"""# Codex SDD Orchestrator Profile
 
 You are running in the dedicated SDD profile. Behave as the `sdd-orchestrator` coordinator.
 
@@ -388,11 +436,14 @@ You are running in the dedicated SDD profile. Behave as the `sdd-orchestrator` c
 
 Coordinate Spec-Driven Development workflows. Keep the main context thin, delegate phase work to SDD subagents, synthesize results, and persist artifacts in Engram.
 
+{multiagent_policy_block()}
+{strict_tdd_policy_block()}
 ## Required behavior
 
 - Treat `sdd init`, `sdd-new`, `sdd ff`, `sdd apply`, `sdd verify`, `sdd archive`, `sdd auto`, `sdd-exec`, and `ready to exec` as SDD workflow triggers.
-- Before any SDD command except init, ensure `sdd-init/{project}` exists in Engram; if missing, run SDD init first.
-- Use SDD phase subagents for real phase work: `sdd-init`, `sdd-explore`, `sdd-propose`, `sdd-spec`, `sdd-design`, `sdd-tasks`, `sdd-apply`, `sdd-verify`, `sdd-archive`.
+- Before any SDD command except init, ensure `sdd-init/{{project}}` exists in Engram; if missing, run SDD init first.
+- Use SDD phase subagents for real phase work by default: `sdd-init`, `sdd-explore`, `sdd-propose`, `sdd-spec`, `sdd-design`, `sdd-tasks`, `sdd-apply`, `sdd-verify`, `sdd-archive`.
+- Apply Strict TDD by default when a test runner is available and the change touches production code; require apply/verify TDD evidence in that mode.
 - In `sdd auto` / ready-to-exec mode, complete missing planning, apply, verify, and archive if verification passes. Do one fix loop after verification failure, then stop and report blockers.
 - Do not ask between phases in auto mode unless blocked, verification fails after one fix loop, or approval is required for destructive side effects.
 - Preserve the Engram memory protocol from the global instructions. Save significant decisions, discoveries, config changes, and bug fixes.
@@ -401,15 +452,15 @@ Coordinate Spec-Driven Development workflows. Keep the main context thin, delega
 
 ## Artifact topic keys
 
-- Project context: `sdd-init/{project}`
-- Exploration: `sdd/{change-name}/explore`
-- Proposal: `sdd/{change-name}/proposal`
-- Spec: `sdd/{change-name}/spec`
-- Design: `sdd/{change-name}/design`
-- Tasks: `sdd/{change-name}/tasks`
-- Apply progress: `sdd/{change-name}/apply-progress`
-- Verify report: `sdd/{change-name}/verify-report`
-- Archive report: `sdd/{change-name}/archive-report`
+- Project context: `sdd-init/{{project}}`
+- Exploration: `sdd/{{change-name}}/explore`
+- Proposal: `sdd/{{change-name}}/proposal`
+- Spec: `sdd/{{change-name}}/spec`
+- Design: `sdd/{{change-name}}/design`
+- Tasks: `sdd/{{change-name}}/tasks`
+- Apply progress: `sdd/{{change-name}}/apply-progress`
+- Verify report: `sdd/{{change-name}}/verify-report`
+- Archive report: `sdd/{{change-name}}/archive-report`
 """
 
 
@@ -455,13 +506,24 @@ def ensure_config_agents(dry_run: bool, changed: list[str]) -> None:
     if "[agents]" not in content:
         content = content.rstrip() + "\n\n[agents]\nmax_threads = 6\nmax_depth = 1\njob_max_runtime_seconds = 1800\n"
     else:
-        # Keep it simple and idempotent: ensure keys exist after [agents].
-        if "max_threads" not in content:
-            content = content.rstrip() + "\nmax_threads = 6\n"
-        if "max_depth" not in content:
-            content = content.rstrip() + "\nmax_depth = 1\n"
-        if "job_max_runtime_seconds" not in content:
-            content = content.rstrip() + "\njob_max_runtime_seconds = 1800\n"
+        lines = content.splitlines()
+        start = next(i for i, line in enumerate(lines) if line.strip() == "[agents]")
+        end = len(lines)
+        for i in range(start + 1, len(lines)):
+            if lines[i].strip().startswith("[") and lines[i].strip().endswith("]"):
+                end = i
+                break
+        section = "\n".join(lines[start:end])
+        additions: list[str] = []
+        if "max_threads" not in section:
+            additions.append("max_threads = 6")
+        if "max_depth" not in section:
+            additions.append("max_depth = 1")
+        if "job_max_runtime_seconds" not in section:
+            additions.append("job_max_runtime_seconds = 1800")
+        if additions:
+            lines[end:end] = additions
+            content = "\n".join(lines) + "\n"
     write_text_if_changed(CODEX_CONFIG_PATH, content.rstrip() + "\n", dry_run, changed)
 
 
@@ -554,6 +616,9 @@ def run_test() -> None:
     active_profile = read_text(SDD_PROFILE_PATH)
     if "sdd-orchestrator" not in active_profile or "ready-to-exec" not in active_profile:
         raise SystemExit("SDD profile instructions missing orchestrator/auto content")
+    for needle in ["Multi-agent default policy", "Single-agent inline execution is an exception", "Strict TDD default policy", "TDD Cycle Evidence"]:
+        if needle not in active_profile:
+            raise SystemExit(f"SDD profile instructions missing multi-agent/TDD default: {needle}")
     namespace_needles = [
         "PROJECT_NAME",
         "artifact_namespace_drift",
@@ -569,11 +634,19 @@ def run_test() -> None:
     orchestrator_needles = [
         "Gentle AI",
         "SDD Orchestrator",
+        "Multi-agent default policy",
+        "Strict TDD default policy",
+        "single-agent exception",
         "## Synced OpenCode orchestrator prompt",
     ]
     for needle in orchestrator_needles:
         if needle not in orchestrator_agent:
             raise SystemExit(f"sdd-orchestrator agent missing upstream prompt content: {needle}")
+    for agent_name in ["sdd-apply", "sdd-verify"]:
+        agent_text = read_text(AGENTS_DIR / f"{agent_name}.toml")
+        for needle in ["Strict TDD default policy", "TDD Cycle Evidence"]:
+            if needle not in agent_text:
+                raise SystemExit(f"{agent_name} missing strict TDD default content: {needle}")
     for name in ["sdd-auto.md", "sdd-exec.md", "sdd-sync.md"]:
         if not (PROMPTS_DIR / name).exists():
             raise SystemExit(f"Missing prompt: {PROMPTS_DIR / name}")
@@ -588,6 +661,8 @@ def run_test() -> None:
         "sdd auto <change>",
         "Canonical project guard",
         "artifact_namespace_drift",
+        "Multi-agent default",
+        "Strict TDD default",
     ]
     for needle in required:
         if needle not in active:

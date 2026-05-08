@@ -155,6 +155,26 @@ ready to exec my-change
 
 `auto` / `ready to exec` completes the full flow: init, missing planning, apply, verify, archive if verification passes, with one fix loop on verification failure.
 
+
+## Multi-agent and Strict TDD defaults
+
+The installer configures Codex to mirror Gentle AI/OpenCode SDD intent:
+
+- `sdd-orchestrator` is the coordinator and should keep its own context thin.
+- Non-trivial SDD work should use generated phase agents (`sdd-explore`, `sdd-propose`, `sdd-spec`, `sdd-design`, `sdd-tasks`, `sdd-apply`, `sdd-verify`, `sdd-archive`).
+- Single-agent inline execution is an exception for docs-only, tiny config-only, urgent tightly-coupled hotfixes, or when the current Codex runtime blocks subagent spawning.
+- Strict TDD is the default when a test runner exists and the change touches production code. In that mode, apply must produce TDD Cycle Evidence and verify must reject missing evidence.
+
+These rules are generated into:
+
+- `~/.codex/agents/sdd-orchestrator.toml`
+- `~/.codex/agents/sdd-apply.toml`
+- `~/.codex/agents/sdd-verify.toml`
+- `~/.codex/sdd-profile-instructions.md`
+- `~/.codex/engram-instructions.md` and `~/.codex/agents.md`
+
+Run `./install.sh --update-gentle` after Gentle AI/OpenCode updates to regenerate these Codex defaults.
+
 ## Engram artifact namespace guard
 
 Codex SDD phase agents must not rely on the implicit project selected by the Engram MCP server. The SDD profile now instructs the orchestrator to resolve `PROJECT_ROOT` and `PROJECT_NAME`, pass them to every phase, and require explicit `project: PROJECT_NAME` on Engram artifact reads/writes.
