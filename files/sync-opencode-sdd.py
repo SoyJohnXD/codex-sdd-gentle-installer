@@ -596,6 +596,14 @@ def write_state(dry_run: bool, changed: list[str]) -> None:
     write_text_if_changed(STATE_PATH, json.dumps(state, indent=2, sort_keys=True) + "\n", dry_run, changed)
 
 
+def ensure_tomllib_runtime(exc: Exception) -> None:
+    """Re-run --test with Python 3.11 when the system python lacks tomllib."""
+    python311 = shutil.which("python3.11")
+    if python311 and Path(python311).resolve() != Path(sys.executable).resolve():
+        os.execv(python311, [python311, *sys.argv])
+    raise SystemExit(f"Python tomllib unavailable; use python3.11 for tests: {exc}")
+
+
 def run_test() -> None:
     missing = [str(AGENTS_DIR / f"{name}.toml") for name in ALL_AGENTS if not (AGENTS_DIR / f"{name}.toml").exists()]
     if missing:
@@ -603,7 +611,7 @@ def run_test() -> None:
     try:
         import tomllib  # Python 3.11+
     except Exception as exc:
-        raise SystemExit(f"Python tomllib unavailable; use python3.11 for tests: {exc}")
+        ensure_tomllib_runtime(exc)
     for p in sorted(AGENTS_DIR.glob("sdd*.toml")):
         tomllib.loads(p.read_text())
     config_content = CODEX_CONFIG_PATH.read_text()
