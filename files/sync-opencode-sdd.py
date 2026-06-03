@@ -80,25 +80,39 @@ DEFAULT_REASONING = {
     "sdd-orchestrator": "high",
 }
 
-# Explicit GPT model assignments for Codex agents.
+# Explicit GPT model + reasoning-effort assignments for Codex agents.
 # These override whatever opencode.json reports — opencode models (opencode-go/*, ollama/*, etc.)
 # are not valid in Codex which targets OpenAI's API.
-# Update these values here to change models globally; re-run codex-sdd-sync to apply.
+# To change models: update these maps and re-run codex-sdd-sync.
 CODEX_MODEL_MAP: dict[str, str] = {
-    # Heavy: architecture decisions and orchestration
+    # Full model — architecture decisions, implementation
     "sdd-orchestrator": "gpt-5.5",
     "sdd-propose":      "gpt-5.5",
+    "sdd-spec":         "gpt-5.5",
     "sdd-design":       "gpt-5.5",
-    # Standard: structured phase work
-    "sdd-init":         "gpt-5.4",
-    "sdd-explore":      "gpt-5.4",
-    "sdd-spec":         "gpt-5.4",
-    "sdd-apply":        "gpt-5.4",
+    "sdd-apply":        "gpt-5.5",
+    # Mid model — verification needs strong reasoning too
     "sdd-verify":       "gpt-5.4",
-    "sdd-tasks":        "gpt-5.4",
-    # Light: routine / low-reasoning phases
+    # Mini model — structured but lighter phases
+    "sdd-tasks":        "gpt-5.5-mini",
+    "sdd-init":         "gpt-5.5-mini",
+    "sdd-explore":      "gpt-5.5-mini",
     "sdd-archive":      "gpt-5.5-mini",
     "sdd-onboard":      "gpt-5.5-mini",
+}
+
+CODEX_REASONING_MAP: dict[str, str] = {
+    "sdd-orchestrator": "high",
+    "sdd-propose":      "xhigh",
+    "sdd-spec":         "high",
+    "sdd-design":       "high",
+    "sdd-apply":        "high",
+    "sdd-verify":       "xhigh",
+    "sdd-tasks":        "high",
+    "sdd-explore":      "high",
+    "sdd-init":         "medium",
+    "sdd-archive":      "medium",
+    "sdd-onboard":      "medium",
 }
 
 
@@ -221,6 +235,12 @@ def normalize_model(model: str | None, agent_name: str | None = None) -> str:
     if not model:
         return "gpt-5.4"
     return model[len("openai/"):] if model.startswith("openai/") else model
+
+
+def normalize_effort(effort: str | None, agent_name: str | None = None) -> str:
+    if agent_name and agent_name in CODEX_REASONING_MAP:
+        return CODEX_REASONING_MAP[agent_name]
+    return effort or DEFAULT_REASONING.get(agent_name or "", "medium")
 
 
 def extract_file_prompt(prompt_ref: str | None) -> str:
@@ -374,7 +394,7 @@ Use SDD subagents for phase work by default. Keep local work to orchestration, a
 
 def render_agent(name: str, cfg: Dict[str, Any], prompt_body: str) -> str:
     model = normalize_model(cfg.get("model"), agent_name=name)
-    effort = cfg.get("reasoningEffort") or DEFAULT_REASONING.get(name, "medium")
+    effort = normalize_effort(cfg.get("reasoningEffort"), agent_name=name)
     sandbox = SANDBOX_BY_AGENT.get(name, DEFAULT_SANDBOX)
     desc = cfg.get("description") or f"Codex SDD agent {name}"
     if name == "sdd-orchestrator":
