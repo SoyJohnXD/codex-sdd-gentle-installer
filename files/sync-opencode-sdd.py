@@ -599,13 +599,26 @@ def sync_prompts(dry_run: bool, changed: list[str]) -> None:
         content = codex_prompt_content(src.read_text())
         note = "\n\n---\nCodex compatibility: if this prompt is not surfaced as a slash command, type the same command textually (for example `sdd auto <change>`).\n"
         write_text_if_changed(PROMPTS_DIR / src.name, content.rstrip() + note, dry_run, changed)
-    auto_prompts = {
-        "sdd-auto.md": "Run SDD AUTO mode for change: $ARGUMENTS\nComplete missing planning, apply, verify, and archive if verification passes. Use sdd-orchestrator. Artifact store: engram. Do not pause between phases unless blocked or approval is required.",
-        "sdd-exec.md": "Execute ready-to-exec SDD change: $ARGUMENTS\nUse AUTO mode. If tasks already exist, apply -> verify -> archive if verification passes. If artifacts are missing, create missing planning artifacts first.",
-        "sdd-sync.md": "Synchronize Codex SDD workflow from OpenCode/gentle-ai by running `python3 ~/.codex/scripts/sync-opencode-sdd.py`, then `python3 ~/.codex/scripts/sync-opencode-sdd.py --test`. Summarize changes.",
+    # (agent, body) — agent=None means no agent binding (runs in main)
+    auto_prompts: dict[str, tuple[str | None, str]] = {
+        "sdd-auto.md": (
+            "sdd-orchestrator",
+            "Run SDD AUTO mode for change: $ARGUMENTS\nComplete missing planning, apply, verify, and archive if verification passes. Use sdd-orchestrator. Artifact store: engram. Do not pause between phases unless blocked or approval is required.",
+        ),
+        "sdd-exec.md": (
+            "sdd-orchestrator",
+            "Execute ready-to-exec SDD change: $ARGUMENTS\nUse AUTO mode. If tasks already exist, apply -> verify -> archive if verification passes. If artifacts are missing, create missing planning artifacts first.",
+        ),
+        "sdd-sync.md": (
+            None,
+            "Synchronize Codex SDD workflow from OpenCode/gentle-ai by running `python3 ~/.codex/scripts/sync-opencode-sdd.py`, then `python3 ~/.codex/scripts/sync-opencode-sdd.py --test`. Summarize changes.",
+        ),
     }
-    for name, body in auto_prompts.items():
-        text = f"---\ndescription: {name[:-3]} workflow prompt\n---\n\n{body}\n"
+    for name, (agent, body) in auto_prompts.items():
+        fm = f"description: {name[:-3]} workflow prompt"
+        if agent:
+            fm += f"\nagent: {agent}"
+        text = f"---\n{fm}\n---\n\n{body}\n"
         write_text_if_changed(PROMPTS_DIR / name, text, dry_run, changed)
 
 
