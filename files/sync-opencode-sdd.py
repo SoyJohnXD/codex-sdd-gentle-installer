@@ -80,6 +80,27 @@ DEFAULT_REASONING = {
     "sdd-orchestrator": "high",
 }
 
+# Explicit GPT model assignments for Codex agents.
+# These override whatever opencode.json reports — opencode models (opencode-go/*, ollama/*, etc.)
+# are not valid in Codex which targets OpenAI's API.
+# Update these values here to change models globally; re-run codex-sdd-sync to apply.
+CODEX_MODEL_MAP: dict[str, str] = {
+    # Heavy: architecture decisions and orchestration
+    "sdd-orchestrator": "gpt-5.5",
+    "sdd-propose":      "gpt-5.5",
+    "sdd-design":       "gpt-5.5",
+    # Standard: structured phase work
+    "sdd-init":         "gpt-5.4",
+    "sdd-explore":      "gpt-5.4",
+    "sdd-spec":         "gpt-5.4",
+    "sdd-apply":        "gpt-5.4",
+    "sdd-verify":       "gpt-5.4",
+    "sdd-tasks":        "gpt-5.4",
+    # Light: routine / low-reasoning phases
+    "sdd-archive":      "gpt-5.5-mini",
+    "sdd-onboard":      "gpt-5.5-mini",
+}
+
 
 def multiagent_policy_block() -> str:
     return """## Multi-agent default policy
@@ -194,7 +215,9 @@ def run_mcp_audit() -> None:
     print("\n".join(mcp_audit_lines(read_text(CODEX_CONFIG_PATH))))
 
 
-def normalize_model(model: str | None) -> str:
+def normalize_model(model: str | None, agent_name: str | None = None) -> str:
+    if agent_name and agent_name in CODEX_MODEL_MAP:
+        return CODEX_MODEL_MAP[agent_name]
     if not model:
         return "gpt-5.4"
     return model[len("openai/"):] if model.startswith("openai/") else model
@@ -350,7 +373,7 @@ Use SDD subagents for phase work by default. Keep local work to orchestration, a
 
 
 def render_agent(name: str, cfg: Dict[str, Any], prompt_body: str) -> str:
-    model = normalize_model(cfg.get("model"))
+    model = normalize_model(cfg.get("model"), agent_name=name)
     effort = cfg.get("reasoningEffort") or DEFAULT_REASONING.get(name, "medium")
     sandbox = SANDBOX_BY_AGENT.get(name, DEFAULT_SANDBOX)
     desc = cfg.get("description") or f"Codex SDD agent {name}"
