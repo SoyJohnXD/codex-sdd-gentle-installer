@@ -7,7 +7,7 @@ Installs the Codex compatibility layer for the gentle-ai/OpenCode SDD workflow.
 Use this when a teammate starts with only Git and needs the complete local setup.
 
 ```bash
-git clone https://github.com/nicolasvosoria/codex-sdd-gentle-installer.git
+git clone https://github.com/SoyJohnXD/codex-sdd-gentle-installer.git
 cd codex-sdd-gentle-installer
 ./install-full.sh
 ```
