@@ -26,6 +26,8 @@ CODEX_SCRIPTS_DIR = CODEX_DIR / "scripts"
 USER_SKILLS_DIR = HOME / ".agents" / "skills"
 STATE_PATH = CODEX_DIR / "sdd-sync-state.json"
 SDD_PROFILE_PATH = CODEX_DIR / "sdd-profile-instructions.md"
+SDD_COMBINED_PATH = CODEX_DIR / "sdd-combined-instructions.md"
+SDD_PROFILE_TOML = CODEX_DIR / "sdd.config.toml"
 CODEX_CONFIG_PATH = CODEX_DIR / "config.toml"
 
 START = "<!-- gentle-ai:codex-sdd-workflow -->"
@@ -521,6 +523,31 @@ model_instructions_file = "{profile}"
         write_text_if_changed(CODEX_CONFIG_PATH, content, dry_run, changed)
 
 
+def sync_profile(dry_run: bool, changed: list[str]) -> None:
+    """Generate sdd-combined-instructions.md and sdd.config.toml for `codex -p sdd`.
+
+    `codex -p sdd` layers $CODEX_HOME/sdd.config.toml on top of config.toml.
+    The combined file = engram-instructions.md (Engram protocol + SDD workflow block)
+    + sdd-profile-instructions.md (full orchestrator role for the session).
+    This gives the main agent complete SDD orchestrator context for the whole session.
+    """
+    engram = read_text(CODEX_DIR / "engram-instructions.md")
+    profile = read_text(SDD_PROFILE_PATH)
+    combined = engram.rstrip() + "\n\n---\n\n" + profile.rstrip() + "\n"
+    write_text_if_changed(SDD_COMBINED_PATH, combined, dry_run, changed)
+
+    toml = (
+        "# Profile config for `codex -p sdd`\n"
+        "# Layers on top of ~/.codex/config.toml via: codex -p sdd\n"
+        "# Makes the main agent behave as the SDD orchestrator for the full session.\n"
+        'model = "gpt-5.5"\n'
+        'model_reasoning_effort = "high"\n'
+        'plan_mode_reasoning_effort = "xhigh"\n'
+        f'model_instructions_file = "{SDD_COMBINED_PATH}"\n'
+    )
+    write_text_if_changed(SDD_PROFILE_TOML, toml, dry_run, changed)
+
+
 def sync_protocol_block() -> str:
     return """## OpenCode -> Codex Sync Protocol
 
@@ -718,6 +745,13 @@ def run_test() -> None:
         text = p.read_text()
         if "agent: gentle-orchestrator" in text:
             raise SystemExit(f"Codex prompt still references upstream OpenCode agent name: {p}")
+    if not SDD_COMBINED_PATH.exists():
+        raise SystemExit(f"Missing combined instructions for -p sdd: {SDD_COMBINED_PATH}")
+    if not SDD_PROFILE_TOML.exists():
+        raise SystemExit(f"Missing profile TOML for -p sdd: {SDD_PROFILE_TOML}")
+    profile_toml = SDD_PROFILE_TOML.read_text()
+    if "model_instructions_file" not in profile_toml or "sdd-combined" not in profile_toml:
+        raise SystemExit("sdd.config.toml missing model_instructions_file pointing to combined instructions")
     active = read_text(CODEX_DIR / "engram-instructions.md")
     required = [
         "AUTO / READY-TO-EXEC",
@@ -746,6 +780,7 @@ def run_sync(dry_run: bool = False) -> list[str]:
     sync_skills(dry_run, changed)
     ensure_config_agents(dry_run, changed)
     ensure_sdd_profile(dry_run, changed)
+    sync_profile(dry_run, changed)
     ensure_required_mcps(dry_run, changed)
     update_instruction_files(dry_run, changed)
     write_state(dry_run, changed)
