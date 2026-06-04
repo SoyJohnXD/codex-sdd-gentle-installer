@@ -151,7 +151,7 @@ if [[ "$NO_SYNC" != "1" ]]; then
     say "running validation test with python3.11"
     run python3.11 "${HOME}/.codex/scripts/sync-opencode-sdd.py" --test
   else
-    say "python3.11 not found; skipping TOML validation. Install python3.11 and run: python3.11 ~/.codex/scripts/sync-opencode-sdd.py --test"
+    say "python3.11 not found; skipping TOML validation. To install: brew install python@3.11 (macOS) or your distro package manager. Then run: python3.11 ~/.codex/scripts/sync-opencode-sdd.py --test"
   fi
 fi
 

@@ -172,6 +172,7 @@ ensure_prerequisites() {
   ensure_command python3 python3
   if ! command -v python3.11 >/dev/null 2>&1; then
     warn "python3.11 not found; TOML validation will be skipped unless installed later"
+    warn "to install python3.11: brew install python@3.11 (macOS) or your distro package manager"
   fi
 }
 
@@ -300,7 +301,7 @@ validate_install() {
     say "running Python 3.11 validation"
     run python3.11 "${HOME}/.codex/scripts/sync-opencode-sdd.py" --test
   else
-    warn "python3.11 not found; skipped TOML validation"
+    warn "python3.11 not found; skipped TOML validation. To install: brew install python@3.11 (macOS) or your distro package manager."
   fi
 }
 
@@ -322,6 +323,9 @@ CLI users can also run:
 
 If you update Gentle AI/OpenCode later:
   ./install.sh --update-gentle
+
+If agent-stack or other tools are not found, add ~/.local/bin to your PATH (zsh):
+  export PATH="$HOME/.local/bin:$PATH"
 EOF
 }
 
