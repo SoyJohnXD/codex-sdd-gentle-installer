@@ -101,11 +101,11 @@ CODEX_MODEL_MAP: dict[str, str] = {
     # Mid model — verification needs strong reasoning too
     "sdd-verify":       "gpt-5.4",
     # Mini model — structured but lighter phases
-    "sdd-tasks":        "gpt-5.5-mini",
-    "sdd-init":         "gpt-5.5-mini",
-    "sdd-explore":      "gpt-5.5-mini",
-    "sdd-archive":      "gpt-5.5-mini",
-    "sdd-onboard":      "gpt-5.5-mini",
+    "sdd-tasks":        "gpt-5.4-mini",
+    "sdd-init":         "gpt-5.4-mini",
+    "sdd-explore":      "gpt-5.4-mini",
+    "sdd-archive":      "gpt-5.4-mini",
+    "sdd-onboard":      "gpt-5.4-mini",
 }
 
 CODEX_REASONING_MAP: dict[str, str] = {
