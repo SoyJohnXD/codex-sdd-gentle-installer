@@ -32,7 +32,22 @@ Supported full-bootstrap platforms:
 | macOS | Supported | Recommended for Codex Desktop users. Restart Codex Desktop after install. |
 | Linux | Supported | Works for CLI-oriented setup. |
 | WSL2 | Supported | Recommended Windows path. |
-| Native Windows | Not supported yet | Use WSL2; a future `install-full.ps1` can cover native Windows. |
+| Native Windows | ✅ | `powershell -ExecutionPolicy Bypass -File install-full.ps1` |
+
+## Windows install
+
+```powershell
+# Prerequisites: Git, Python 3, PowerShell 5.1+
+# Requires $env:AGENT_STACK_LIB pointing to agent-stack/lib (set by agent-stack bootstrap)
+
+# Full bootstrap (installs OpenCode, gentle-ai, Codex SDD layer):
+powershell -ExecutionPolicy Bypass -File install-full.ps1
+
+# SDD layer only (if OpenCode and gentle-ai already installed):
+powershell -ExecutionPolicy Bypass -File install.ps1
+```
+
+OpenCode is installed via winget → scoop → choco (first available). If none are present, the script prints the manual download URL.
 
 Useful options:
 
