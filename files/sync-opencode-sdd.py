@@ -516,16 +516,6 @@ Coordinate Spec-Driven Development workflows. Keep the main context thin, delega
 
 def ensure_sdd_profile(dry_run: bool, changed: list[str]) -> None:
     write_text_if_changed(SDD_PROFILE_PATH, sdd_profile_text(), dry_run, changed)
-    content = read_text(CODEX_CONFIG_PATH)
-    block = """
-[profiles.sdd]
-model = "gpt-5.5"
-model_reasoning_effort = "high"
-model_instructions_file = "{profile}"
-""".format(profile=str(SDD_PROFILE_PATH))
-    if "[profiles.sdd]" not in content:
-        content = content.rstrip() + "\n" + block + "\n"
-        write_text_if_changed(CODEX_CONFIG_PATH, content, dry_run, changed)
 
 
 def sync_profile(dry_run: bool, changed: list[str]) -> None:
