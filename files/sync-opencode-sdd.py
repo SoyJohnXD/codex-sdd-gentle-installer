@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 import os
+import platform as _platform
 import re
 import shutil
 import sys
@@ -18,7 +19,11 @@ from pathlib import Path
 from typing import Dict, Any
 
 HOME = Path.home()
-OPENCODE_DIR = HOME / ".config" / "opencode"
+OPENCODE_DIR = (
+    Path(os.environ.get("APPDATA", str(HOME / "AppData" / "Roaming"))) / "opencode"
+    if _platform.system() == "Windows"
+    else HOME / ".config" / "opencode"
+)
 CODEX_DIR = HOME / ".codex"
 AGENTS_DIR = CODEX_DIR / "agents"
 PROMPTS_DIR = CODEX_DIR / "prompts"
