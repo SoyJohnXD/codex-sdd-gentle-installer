@@ -282,6 +282,59 @@ install_codex_sdd_layer() {
   run "${SCRIPT_DIR}/install.sh" "${args[@]}"
 }
 
+# TEMP: gentle-ai <=1.37.0 writes two invalid keys to ~/.codex/config.toml on Linux:
+#   1. [permissions.*.filesystem.":root"] "." = "write"  → crashes bubblewrap (bwrap)
+#   2. **-glob deny rules without glob_scan_max_depth    → spams warnings on every run
+# This function patches the generated config after `gentle-ai install` runs.
+# Remove once gentle-ai ships a Linux-aware permissions component.
+# Upstream issue: https://github.com/Gentleman-Programming/gentle-ai/issues
+patch_codex_permissions_linux() {
+  [[ "$PLATFORM" == "macos" ]] && return 0
+  local config="${HOME}/.codex/config.toml"
+  [[ -f "$config" ]] || return 0
+  if [[ "$DRY_RUN" == "1" ]]; then
+    say "[dry-run] would patch $config: remove ':root' write, add glob_scan_max_depth=4"
+    return 0
+  fi
+  say "applying Linux sandbox compatibility patch to Codex permissions (temp workaround)"
+  python3 - "$config" <<'PYEOF'
+import re, sys, pathlib
+
+p = pathlib.Path(sys.argv[1])
+text = p.read_text()
+
+# Fix 1: remove [permissions.*.filesystem.":root"] "." = "write"
+# This key makes bubblewrap try to own /.git → immediate crash on Linux.
+text = re.sub(
+    r'\[permissions\.[^\]]+\.filesystem\."?:root"?\]\n(?:[^\[]*\n)*',
+    '',
+    text,
+)
+
+# Fix 2: add glob_scan_max_depth = 4 at the [permissions.*.filesystem] level.
+# Without it, every ** deny-glob emits a warning on Linux because bubblewrap
+# cannot expand unbounded ** natively.
+def inject_depth(m):
+    header = m.group(1)
+    pm = re.match(r'\[(.+)\.filesystem\."?:workspace_roots"?\]', header)
+    if not pm:
+        return m.group(0)
+    fs_table = '[' + pm.group(1) + '.filesystem]'
+    if fs_table in text:
+        return m.group(0)
+    return fs_table + '\nglob_scan_max_depth = 4\n\n' + m.group(0)
+
+text = re.sub(
+    r'(\[permissions\.[^\]]+\.filesystem\."?:workspace_roots"?\]\n)',
+    inject_depth,
+    text,
+)
+
+p.write_text(text)
+print('[codex-sdd-full] permissions patch applied')
+PYEOF
+}
+
 validate_install() {
   if [[ "$NO_SYNC" == "1" ]]; then
     warn "skipping sync validation because --no-sync was provided"
@@ -354,6 +407,7 @@ install_opencode_if_needed
 install_gentle_if_needed
 ensure_codex_cli_optional
 run_gentle_setup
+patch_codex_permissions_linux
 ensure_opencode_config
 install_codex_sdd_layer
 validate_install
