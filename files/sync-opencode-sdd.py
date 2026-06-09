@@ -514,16 +514,19 @@ Coordinate Spec-Driven Development workflows. Keep the main context thin, delega
 """
 
 
-def strip_profile_model(content: str) -> str:
-    """Remove any ``model = ...`` line from the [profiles.sdd] section only.
+def migrate_legacy_sdd_profile(dry_run: bool, changed: list[str]) -> None:
+    """Remove the legacy [profiles.sdd] block and profile = "sdd" selector from config.toml.
 
-    Leaves all other sections and profile keys intact. Safe to call on a config
-    that has no [profiles.sdd] section (returns content unchanged).
+    Codex >=0.138 rejects config.toml with [profiles.sdd] or profile = "sdd" when
+    sdd.config.toml already exists. This migration runs during every sync so that
+    previously-broken installs self-heal automatically.
     """
-    def _strip(m: re.Match) -> str:
-        return re.sub(r"(?m)^\s*model\s*=\s*[^\n]*\n?", "", m.group(0))
-
-    return re.sub(r"(?s)\[profiles\.sdd\].*?(?=\n\[|\Z)", _strip, content)
+    content = read_text(CODEX_CONFIG_PATH)
+    if "[profiles.sdd]" not in content and 'profile = "sdd"' not in content:
+        return
+    content = re.sub(r'(?m)^\s*profile\s*=\s*"sdd"\s*\n', "", content)
+    content = re.sub(r"(?s)\[profiles\.sdd\][^\[]*", "", content)
+    write_text_if_changed(CODEX_CONFIG_PATH, content, dry_run, changed)
 
 
 def ensure_sdd_profile(dry_run: bool, changed: list[str]) -> None:
@@ -795,6 +798,7 @@ def run_sync(dry_run: bool = False) -> list[str]:
     sync_skills(dry_run, changed)
     ensure_config_agents(dry_run, changed)
     ensure_sdd_profile(dry_run, changed)
+    migrate_legacy_sdd_profile(dry_run, changed)
     sync_profile(dry_run, changed)
     ensure_required_mcps(dry_run, changed)
     update_instruction_files(dry_run, changed)
