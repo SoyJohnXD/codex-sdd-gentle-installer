@@ -514,6 +514,18 @@ Coordinate Spec-Driven Development workflows. Keep the main context thin, delega
 """
 
 
+def strip_profile_model(content: str) -> str:
+    """Remove any ``model = ...`` line from the [profiles.sdd] section only.
+
+    Leaves all other sections and profile keys intact. Safe to call on a config
+    that has no [profiles.sdd] section (returns content unchanged).
+    """
+    def _strip(m: re.Match) -> str:
+        return re.sub(r"(?m)^\s*model\s*=\s*[^\n]*\n?", "", m.group(0))
+
+    return re.sub(r"(?s)\[profiles\.sdd\].*?(?=\n\[|\Z)", _strip, content)
+
+
 def ensure_sdd_profile(dry_run: bool, changed: list[str]) -> None:
     write_text_if_changed(SDD_PROFILE_PATH, sdd_profile_text(), dry_run, changed)
 
@@ -531,11 +543,11 @@ def sync_profile(dry_run: bool, changed: list[str]) -> None:
     combined = engram.rstrip() + "\n\n---\n\n" + profile.rstrip() + "\n"
     write_text_if_changed(SDD_COMBINED_PATH, combined, dry_run, changed)
 
+    # Do not pin a model: let sdd.config.toml inherit the user's configured base model.
     toml = (
         "# Profile config for `codex -p sdd`\n"
         "# Layers on top of ~/.codex/config.toml via: codex -p sdd\n"
         "# Makes the main agent behave as the SDD orchestrator for the full session.\n"
-        'model = "gpt-5.5"\n'
         'model_reasoning_effort = "high"\n'
         'plan_mode_reasoning_effort = "xhigh"\n'
         f'model_instructions_file = "{SDD_COMBINED_PATH}"\n'
@@ -694,6 +706,14 @@ def run_test() -> None:
         tomllib.loads(p.read_text())
     config_content = CODEX_CONFIG_PATH.read_text()
     tomllib.loads(config_content)
+    # sdd.config.toml must not pin a model — let it inherit the user's base model.
+    sdd_toml_content = SDD_PROFILE_TOML.read_text() if SDD_PROFILE_TOML.exists() else ""
+    parsed_sdd = tomllib.loads(sdd_toml_content)
+    if parsed_sdd.get("model"):
+        raise SystemExit(
+            "sdd.config.toml must not pin a model"
+            " (codex -p sdd should inherit the user's base model)"
+        )
     for name in REQUIRED_MCPS:
         if not has_mcp_block(config_content, name):
             raise SystemExit(f"Codex config missing required MCP server block: {name}")
