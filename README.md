@@ -97,7 +97,7 @@ This runs the complete local update flow:
 - `~/.local/bin/codex-sdd` — opens Codex with the dedicated SDD profile
 - generated Codex SDD agents under `~/.codex/agents/sdd-*.toml`
 - generated prompts under `~/.codex/prompts/sdd-*.md`
-- workflow/sync instructions in `~/.codex/engram-instructions.md` and `~/.codex/agents.md`
+- workflow/sync instructions in `~/.codex/engram-instructions.md` and `~/.codex/AGENTS.override.md`
 - skill discovery symlinks under `~/.agents/skills`
 - Codex MCP config entries in `~/.codex/config.toml` for:
   - `engram` — persistent memory and SDD artifact storage
@@ -186,9 +186,15 @@ These rules are generated into:
 - `~/.codex/agents/sdd-apply.toml`
 - `~/.codex/agents/sdd-verify.toml`
 - `~/.codex/sdd-profile-instructions.md`
-- `~/.codex/engram-instructions.md` and `~/.codex/agents.md`
+- `~/.codex/engram-instructions.md` and `~/.codex/AGENTS.override.md`
 
 Run `./install.sh --update-gentle` after Gentle AI/OpenCode updates to regenerate these Codex defaults.
+
+`AGENTS.override.md` is the file Codex CLI loads first per directory (before `AGENTS.md`); the sync only
+upserts its own `<!-- gentle-ai:codex-sdd-workflow -->` and `<!-- gentle-ai:codex-sync-protocol -->`
+marker blocks there and leaves any other tool's marker blocks (e.g. `intent-overlay`, `persona-co`) untouched.
+If either of gentle-ai's own markers is found unpaired (e.g. an orphaned start marker left by a manual
+edit), the sync refuses to modify the file and reports an error asking you to repair it manually.
 
 ## Engram artifact namespace guard
 

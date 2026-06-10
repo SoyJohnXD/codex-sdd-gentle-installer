@@ -34,6 +34,14 @@ SDD_PROFILE_PATH = CODEX_DIR / "sdd-profile-instructions.md"
 SDD_COMBINED_PATH = CODEX_DIR / "sdd-combined-instructions.md"
 SDD_PROFILE_TOML = CODEX_DIR / "sdd.config.toml"
 CODEX_CONFIG_PATH = CODEX_DIR / "config.toml"
+AGENTS_OVERRIDE_PATH = CODEX_DIR / "AGENTS.override.md"
+LEGACY_AGENTS_PATH = CODEX_DIR / "agents.md"
+
+# Default [agents] values applied only when the key is absent from config.toml,
+# so sync never overwrites a value the user already set.
+DEFAULT_AGENTS_MAX_THREADS = 4
+DEFAULT_AGENTS_MAX_DEPTH = 2
+DEFAULT_AGENTS_JOB_MAX_RUNTIME_SECONDS = 1800
 
 START = "<!-- gentle-ai:codex-sdd-workflow -->"
 END = "<!-- /gentle-ai:codex-sdd-workflow -->"
@@ -421,7 +429,34 @@ def render_agent(name: str, cfg: Dict[str, Any], prompt_body: str) -> str:
     )
 
 
+def markers_balanced(content: str, start: str, end: str) -> bool:
+    """Return True when start/end occurrences form non-overlapping pairs
+    (each start is followed by its end before any other start), including
+    the zero-occurrence case. An orphaned start or end marker is unbalanced.
+    """
+    tokens = sorted(
+        [(m.start(), "start") for m in re.finditer(re.escape(start), content)]
+        + [(m.start(), "end") for m in re.finditer(re.escape(end), content)]
+    )
+    depth = 0
+    for _, kind in tokens:
+        if kind == "start":
+            if depth != 0:
+                return False
+            depth = 1
+        else:
+            if depth != 1:
+                return False
+            depth = 0
+    return depth == 0
+
+
 def replace_block(content: str, start: str, end: str, block: str) -> str:
+    if not markers_balanced(content, start, end):
+        raise ValueError(
+            f"Unbalanced managed-block markers ({start!r} / {end!r}); "
+            "fix the file manually before running sync again"
+        )
     full = f"{start}\n{block.rstrip()}\n{end}"
     pattern = re.compile(re.escape(start) + r".*?" + re.escape(end), re.S)
     if pattern.search(content):
@@ -574,20 +609,90 @@ Do not hand-edit generated `~/.codex/agents/sdd-*.toml` unless the sync script i
 
 
 def update_instruction_files(dry_run: bool, changed: list[str]) -> None:
-    for path in [CODEX_DIR / "engram-instructions.md", CODEX_DIR / "agents.md"]:
+    """Upsert the managed SDD workflow/sync blocks into Codex instruction files.
+
+    Codex CLI loads `AGENTS.override.md` first, then `AGENTS.md`, per directory
+    (first non-empty file wins). `AGENTS.override.md` is therefore the file that
+    must carry the gentle-ai managed blocks. The upsert is marker-scoped
+    (`replace_block` only touches content between its own START/END markers), so
+    other tools' blocks (e.g. `intent-overlay`, `persona-co`, `plan-mode`,
+    `gate-wiring`, `serialization`) in the same file are left untouched.
+    """
+    for path in [CODEX_DIR / "engram-instructions.md", AGENTS_OVERRIDE_PATH]:
         content = read_text(path)
         content = replace_block(content, START, END, workflow_block())
         content = replace_block(content, SYNC_START, SYNC_END, sync_protocol_block())
         write_text_if_changed(path, content, dry_run, changed)
 
 
+def strip_block(content: str, start: str, end: str) -> str:
+    """Remove a start..end marker block (markers included) from content."""
+    pattern = re.compile(re.escape(start) + r".*?" + re.escape(end), re.S)
+    return pattern.sub("", content)
+
+
+def migrate_legacy_agents_md(dry_run: bool, changed: list[str]) -> None:
+    """One-time migration: retire gentle-ai's managed blocks from the dead
+    lowercase `agents.md`.
+
+    Codex never loads lowercase `agents.md` (shadowed by `AGENTS.override.md` /
+    `AGENTS.md`), so any gentle-ai managed blocks written there by older sync
+    runs are stranded and now fully superseded by `AGENTS.override.md` /
+    `AGENTS.md`. Strip only gentle-ai's own marker blocks: if nothing but
+    whitespace remains, delete the file; otherwise keep the file with the
+    user's own content intact and note that the gentle-ai blocks were removed.
+    """
+    if not LEGACY_AGENTS_PATH.exists():
+        return
+    content = read_text(LEGACY_AGENTS_PATH)
+    if START not in content and SYNC_START not in content:
+        return
+    if not markers_balanced(content, START, END) or not markers_balanced(content, SYNC_START, SYNC_END):
+        print(
+            f"WARNING: {LEGACY_AGENTS_PATH} has unbalanced gentle-ai markers; "
+            "skipping legacy agents.md migration — fix the file manually"
+        )
+        return
+
+    stripped = strip_block(content, START, END)
+    stripped = strip_block(stripped, SYNC_START, SYNC_END)
+
+    if stripped.strip() == "":
+        changed.append(str(LEGACY_AGENTS_PATH))
+        if not dry_run:
+            LEGACY_AGENTS_PATH.unlink()
+        return
+
+    if stripped != content:
+        changed.append(str(LEGACY_AGENTS_PATH))
+        print(
+            f"NOTE: removed gentle-ai managed blocks from {LEGACY_AGENTS_PATH}; "
+            "your other content was preserved (Codex no longer loads this file — "
+            "see AGENTS.override.md / AGENTS.md)"
+        )
+        if not dry_run:
+            LEGACY_AGENTS_PATH.write_text(stripped)
+
+
 def ensure_config_agents(dry_run: bool, changed: list[str]) -> None:
+    """Ensure config.toml has an [agents] section, without overwriting user values.
+
+    Only fills in keys that are absent. Existing user-set max_threads/max_depth/
+    job_max_runtime_seconds are left untouched.
+    """
     content = read_text(CODEX_CONFIG_PATH)
-    if "[agents]" not in content:
-        content = content.rstrip() + "\n\n[agents]\nmax_threads = 6\nmax_depth = 1\njob_max_runtime_seconds = 1800\n"
+    lines = content.splitlines()
+    section_indices = [i for i, line in enumerate(lines) if line.strip() == "[agents]"]
+
+    if not section_indices:
+        defaults = (
+            f"max_threads = {DEFAULT_AGENTS_MAX_THREADS}\n"
+            f"max_depth = {DEFAULT_AGENTS_MAX_DEPTH}\n"
+            f"job_max_runtime_seconds = {DEFAULT_AGENTS_JOB_MAX_RUNTIME_SECONDS}\n"
+        )
+        content = content.rstrip() + "\n\n[agents]\n" + defaults
     else:
-        lines = content.splitlines()
-        start = next(i for i, line in enumerate(lines) if line.strip() == "[agents]")
+        start = section_indices[0]
         end = len(lines)
         for i in range(start + 1, len(lines)):
             if lines[i].strip().startswith("[") and lines[i].strip().endswith("]"):
@@ -596,11 +701,11 @@ def ensure_config_agents(dry_run: bool, changed: list[str]) -> None:
         section = "\n".join(lines[start:end])
         additions: list[str] = []
         if "max_threads" not in section:
-            additions.append("max_threads = 6")
+            additions.append(f"max_threads = {DEFAULT_AGENTS_MAX_THREADS}")
         if "max_depth" not in section:
-            additions.append("max_depth = 1")
+            additions.append(f"max_depth = {DEFAULT_AGENTS_MAX_DEPTH}")
         if "job_max_runtime_seconds" not in section:
-            additions.append("job_max_runtime_seconds = 1800")
+            additions.append(f"job_max_runtime_seconds = {DEFAULT_AGENTS_JOB_MAX_RUNTIME_SECONDS}")
         if additions:
             lines[end:end] = additions
             content = "\n".join(lines) + "\n"
@@ -770,7 +875,6 @@ def run_test() -> None:
     profile_toml = SDD_PROFILE_TOML.read_text()
     if "model_instructions_file" not in profile_toml or "sdd-combined" not in profile_toml:
         raise SystemExit("sdd.config.toml missing model_instructions_file pointing to combined instructions")
-    active = read_text(CODEX_DIR / "engram-instructions.md")
     required = [
         "AUTO / READY-TO-EXEC",
         "OpenCode -> Codex Sync Protocol",
@@ -780,9 +884,15 @@ def run_test() -> None:
         "Multi-agent default",
         "Strict TDD default",
     ]
-    for needle in required:
-        if needle not in active:
-            raise SystemExit(f"Active instructions missing: {needle}")
+    for instructions_path in [CODEX_DIR / "engram-instructions.md", AGENTS_OVERRIDE_PATH]:
+        active = read_text(instructions_path)
+        for needle in required:
+            if needle not in active:
+                raise SystemExit(f"{instructions_path} missing: {needle}")
+    if LEGACY_AGENTS_PATH.exists():
+        legacy = read_text(LEGACY_AGENTS_PATH)
+        if START in legacy or SYNC_START in legacy:
+            raise SystemExit(f"{LEGACY_AGENTS_PATH} still carries managed SDD blocks; rerun sync to migrate")
     print("OK: Codex SDD sync test passed")
 
 
@@ -802,6 +912,7 @@ def run_sync(dry_run: bool = False) -> list[str]:
     sync_profile(dry_run, changed)
     ensure_required_mcps(dry_run, changed)
     update_instruction_files(dry_run, changed)
+    migrate_legacy_agents_md(dry_run, changed)
     write_state(dry_run, changed)
     return changed
 
